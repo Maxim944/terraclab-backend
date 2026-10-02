@@ -1,6 +1,5 @@
 import os
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, Request
 import httpx
 
 app = FastAPI(title="Terra.ai API", version="1.0.0")
@@ -31,7 +30,12 @@ async def whatsapp_webhook(request: Request):
         sender_data = data.get("senderData", {})
         
         chat_id = sender_data.get("chatId")
-        text_message = message_data.get("textMessageData", {}).get("textMessage")
+        
+        # Безопасный поиск текста (для обычных сообщений и сообщений из Web/с форматированием)
+        text_message = (
+            message_data.get("textMessageData", {}).get("textMessage") or
+            message_data.get("extendedTextMessageData", {}).get("text")
+        )
         
         if chat_id and text_message:
             # Обработка ответа ИИ
@@ -63,7 +67,7 @@ async def generate_ai_response(user_text: str) -> str:
             )
             res_json = response.json()
             return res_json["choices"][0]["message"]["content"]
-        except Exception as e:
+        except Exception:
             return "Terra.ai: Произошла ошибка при обработке вашего вопроса. Попробуйте еще раз."
 
 async def send_whatsapp_message(chat_id: str, text: str):
