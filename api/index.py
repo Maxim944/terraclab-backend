@@ -19,6 +19,11 @@ def health_check():
     return {"status": "ok", "service": "Terra.ai Agronomist API", "platform": "Vercel Serverless"}
 
 @app.post("/api/webhook/whatsapp")
+@app.post("/api/index.py")
+@app.post("/api")
+@app.post("/")
+async def whatsapp_webhook(request: Request):
+
 async def whatsapp_webhook(request: Request):
     """Прием входящих сообщений из WhatsApp через Green API"""
     data = await request.json()
