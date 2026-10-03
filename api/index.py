@@ -23,7 +23,6 @@ async def whatsapp_webhook(request: Request):
     """Прием входящих сообщений из WhatsApp через Green API"""
     data = await request.json()
     
-    # Проверка типа события (входящее текстовое сообщение)
     type_webhook = data.get("typeWebhook")
     if type_webhook == "incomingMessageReceived":
         message_data = data.get("messageData", {})
@@ -31,22 +30,20 @@ async def whatsapp_webhook(request: Request):
         
         chat_id = sender_data.get("chatId")
         
-        # Безопасный поиск текста (для обычных сообщений и сообщений из Web/с форматированием)
+        # Считываем текст и из обычных сообщений, и из WhatsApp Web/с форматированием
         text_message = (
             message_data.get("textMessageData", {}).get("textMessage") or
             message_data.get("extendedTextMessageData", {}).get("text")
         )
         
         if chat_id and text_message:
-            # Обработка ответа ИИ
             ai_reply = await generate_ai_response(text_message)
-            # Отправка ответа пользователю
             await send_whatsapp_message(chat_id, ai_reply)
             
     return {"status": "success"}
 
 async def generate_ai_response(user_text: str) -> str:
-    """Генерация ответа ИИ-агронома"""
+    """Генерация ответа ИИ-агронома через OpenAI"""
     if not OPENAI_API_KEY:
         return "Terra.ai: Сервис временно настраивается. Напишите нам чуточку позже!"
         
@@ -71,15 +68,19 @@ async def generate_ai_response(user_text: str) -> str:
             return "Terra.ai: Произошла ошибка при обработке вашего вопроса. Попробуйте еще раз."
 
 async def send_whatsapp_message(chat_id: str, text: str):
-    """Отправка сообщения в WhatsApp через Green API"""
+    """Отправка сообщения в WhatsApp через узловой хост Green API"""
     if not GREEN_API_INSTANCE or not GREEN_API_TOKEN:
         return
         
-    url = f"https://api.green-api.com/waInstance{GREEN_API_INSTANCE}/sendMessage/{GREEN_API_TOKEN}"
+    # Точный адрес вашего инстанса (7201) + поддержка редиректов
+    url = f"https://7201.api.green-api.com/waInstance{GREEN_API_INSTANCE}/sendMessage/{GREEN_API_TOKEN}"
     payload = {
         "chatId": chat_id,
         "message": text
     }
     
-    async with httpx.AsyncClient() as client:
-        await client.post(url, json=payload, timeout=10.0)
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        try:
+            await client.post(url, json=payload, timeout=10.0)
+        except Exception as e:
+            print(f"Ошибка отправки сообщения: {e}")
