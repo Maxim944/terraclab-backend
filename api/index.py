@@ -23,8 +23,6 @@ def health_check():
 @app.post("/api")
 @app.post("/")
 async def whatsapp_webhook(request: Request):
-
-async def whatsapp_webhook(request: Request):
     """Прием входящих сообщений из WhatsApp через Green API"""
     data = await request.json()
     
