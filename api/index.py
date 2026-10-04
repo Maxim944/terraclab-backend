@@ -2,10 +2,10 @@ import os
 from fastapi import FastAPI, Request
 import httpx
 
-# 1. Главный экземпляр приложения FastAPI для Vercel
+# 1. Инициализация FastAPI для Vercel Serverless
 app = FastAPI(title="Terra.ai API", version="1.0.0")
 
-# 2. Чтение переменных окружения с автоподстраховкой вариантов названий
+# 2. Чтение переменных окружения с подстраховкой разных наименований
 GREEN_API_INSTANCE = (
     os.getenv("GREEN_API_INSTANCE") or 
     os.getenv("GREEN_API_INSTANCE_ID") or 
@@ -63,19 +63,25 @@ async def whatsapp_webhook(request: Request):
         )
         
         if chat_id and text_message:
-            print(f"[Входящее] Чат: {chat_id} | Сообщение: {text_message}")
+            print(f"[Входящее] Чат: {chat_id} | Текст: {text_message}")
             ai_reply = await generate_ai_response(text_message)
             await send_whatsapp_message(chat_id, ai_reply)
             
     return {"status": "success"}
 
 async def generate_ai_response(user_text: str) -> str:
-    """Генерация ответа ИИ-агронома через Google Gemini API"""
+    """Генерация ответа ИИ-агронома через Google Gemini API с автоподбором модели"""
     if not GEMINI_API_KEY:
-        print("[Ошибка] Переменная GEMINI_API_KEY не найдена в Vercel!")
-        return "Terra.ai: Сервис временно настраивается (не найден ключ API)."
+        print("[Ошибка] GEMINI_API_KEY не найден в переменных Vercel!")
+        return "Terra.ai: Сервис временно настраивается (отсутствует ключ API)."
         
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # Список моделей для автоматического перебора при 404
+    models_to_try = [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-2.0-flash",
+        "gemini-1.5-pro"
+    ]
     
     payload = {
         "system_instruction": {
@@ -90,28 +96,29 @@ async def generate_ai_response(user_text: str) -> str:
     }
     
     async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(url, json=payload, timeout=20.0)
-            res_json = response.json()
-            
-            # Если Google отдал ошибку
-            if response.status_code != 200:
-                print(f"[Ошибка Gemini API {response.status_code}]: {res_json}")
-                return "Terra.ai: Ошибка обращения к ИИ-сервису."
+        for model in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+            try:
+                response = await client.post(url, json=payload, timeout=20.0)
+                res_json = response.json()
                 
-            # Безопасно достаем текст ответа
-            if "candidates" in res_json and len(res_json["candidates"]) > 0:
-                candidate = res_json["candidates"][0]
-                parts = candidate.get("content", {}).get("parts", [])
-                if parts and "text" in parts[0]:
-                    return parts[0]["text"]
-                    
-            print(f"[Нетипичный ответ Gemini]: {res_json}")
-            return "Terra.ai: Не удалось сформировать ответ. Попробуйте еще раз."
+                if response.status_code == 200:
+                    if "candidates" in res_json and len(res_json["candidates"]) > 0:
+                        candidate = res_json["candidates"][0]
+                        parts = candidate.get("content", {}).get("parts", [])
+                        if parts and "text" in parts[0]:
+                            print(f"[Успех Gemini] Модель {model} ответила успешно!")
+                            return parts[0]["text"]
+                elif response.status_code == 404:
+                    print(f"[404 Gemini] Модель {model} не найдена для этого ключа, пробуем следующую...")
+                    continue
+                else:
+                    print(f"[Ошибка Gemini API {response.status_code}]: {res_json}")
+                    return "Terra.ai: Ошибка обращения к ИИ-сервису."
+            except Exception as e:
+                print(f"[Исключение Gemini на {model}]: {e}")
                 
-        except Exception as e:
-            print(f"[Исключение Gemini]: {e}")
-            return "Terra.ai: Произошла ошибка при обработке вашего запроса."
+    return "Terra.ai: Не удалось сформировать ответ. Попробуйте еще раз."
 
 async def send_whatsapp_message(chat_id: str, text: str):
     """Отправка ответа пользователю в WhatsApp через Green API"""
@@ -128,6 +135,6 @@ async def send_whatsapp_message(chat_id: str, text: str):
     async with httpx.AsyncClient(follow_redirects=True) as client:
         try:
             res = await client.post(url, json=payload, timeout=10.0)
-            print(f"[Отправка в WhatsApp] Код ответа Green API: {res.status_code}")
+            print(f"[Отправка в WhatsApp] Статус Green API: {res.status_code}")
         except Exception as e:
             print(f"[Ошибка отправки в WhatsApp]: {e}")
