@@ -5,7 +5,7 @@ import httpx
 # 1. Инициализация FastAPI для Vercel Serverless
 app = FastAPI(title="Terra.ai API", version="1.0.0")
 
-# 2. Чтение переменных окружения с подстраховкой разных наименований
+# 2. Чтение переменных окружения с подстраховкой имён
 GREEN_API_INSTANCE = (
     os.getenv("GREEN_API_INSTANCE") or 
     os.getenv("GREEN_API_INSTANCE_ID") or 
@@ -20,12 +20,11 @@ GREEN_API_TOKEN = (
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# 3. Инструкция (системный промпт) для ИИ-агронома
+# 3. Системный промпт ИИ-агронома
 SYSTEM_PROMPT = """Ты — Terra.ai, персональный ИИ-агроном и эксперт по растениеводству. 
 Твоя задача — давать четкие, практичные и дружелюбные советы по уходу за растениями, борьбе с вредителями, 
 подкормке и поливу. Отвечай кратко, емко и адаптировано под мессенджер WhatsApp."""
 
-# Маршруты проверки статуса сервера (Health Check)
 @app.get("/api")
 @app.get("/api/health")
 def health_check():
@@ -35,7 +34,6 @@ def health_check():
         "platform": "Vercel Serverless"
     }
 
-# Маршруты приема вебхуков от WhatsApp / Green API
 @app.post("/api/webhook/whatsapp")
 @app.post("/api/index.py")
 @app.post("/api")
@@ -48,24 +46,29 @@ async def whatsapp_webhook(request: Request):
         return {"status": "error", "message": "Invalid JSON"}
     
     type_webhook = data.get("typeWebhook")
+    print(f"[Вебхук получен] Тип: {type_webhook}")
     
-    # Обрабатываем только входящие текстовые сообщения
+    # Обрабатываем только входящие сообщения пользователей
     if type_webhook == "incomingMessageReceived":
         message_data = data.get("messageData", {})
         sender_data = data.get("senderData", {})
         
         chat_id = sender_data.get("chatId")
         
-        # Извлекаем текст из обычных или расширенных сообщений
+        # Извлекаем текст сообщения из любых возможных типов (обычный, расширенный, цитата)
         text_message = (
             message_data.get("textMessageData", {}).get("textMessage") or
-            message_data.get("extendedTextMessageData", {}).get("text")
+            message_data.get("extendedTextMessageData", {}).get("text") or
+            message_data.get("extendedTextMessageData", {}).get("textMessage") or
+            message_data.get("quotedMessage", {}).get("textMessageData", {}).get("textMessage")
         )
         
         if chat_id and text_message:
-            print(f"[Входящее] Чат: {chat_id} | Текст: {text_message}")
+            print(f"[Входящее сообщение] Чат: {chat_id} | Текст: {text_message}")
             ai_reply = await generate_ai_response(text_message)
             await send_whatsapp_message(chat_id, ai_reply)
+        else:
+            print(f"[Пропущено] Входящее событие без текста/chatId: {data}")
             
     return {"status": "success"}
 
@@ -75,7 +78,6 @@ async def generate_ai_response(user_text: str) -> str:
         print("[Ошибка] GEMINI_API_KEY не найден в переменных Vercel!")
         return "Terra.ai: Сервис временно настраивается (отсутствует ключ API)."
         
-    # Список моделей для автоматического перебора при 404
     models_to_try = [
         "gemini-1.5-flash",
         "gemini-1.5-flash-latest",
@@ -110,11 +112,10 @@ async def generate_ai_response(user_text: str) -> str:
                             print(f"[Успех Gemini] Модель {model} ответила успешно!")
                             return parts[0]["text"]
                 elif response.status_code == 404:
-                    print(f"[404 Gemini] Модель {model} не найдена для этого ключа, пробуем следующую...")
+                    print(f"[404 Gemini] Модель {model} не найдена, пробуем следующую...")
                     continue
                 else:
                     print(f"[Ошибка Gemini API {response.status_code}]: {res_json}")
-                    return "Terra.ai: Ошибка обращения к ИИ-сервису."
             except Exception as e:
                 print(f"[Исключение Gemini на {model}]: {e}")
                 
@@ -135,6 +136,6 @@ async def send_whatsapp_message(chat_id: str, text: str):
     async with httpx.AsyncClient(follow_redirects=True) as client:
         try:
             res = await client.post(url, json=payload, timeout=10.0)
-            print(f"[Отправка в WhatsApp] Статус Green API: {res.status_code}")
+            print(f"[Отправка в WhatsApp] Статус Green API: {res.status_code} | Ответ: {res.text}")
         except Exception as e:
             print(f"[Ошибка отправки в WhatsApp]: {e}")
