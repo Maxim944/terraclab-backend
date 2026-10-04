@@ -2,12 +2,12 @@ import os
 from fastapi import FastAPI, Request
 import httpx
 
+# Обязательная строка для Vercel: экземпляр приложения верхнего уровня
 app = FastAPI(title="Terra.ai API", version="1.0.0")
 
-# Переменные окружения из Vercel Dashboard
 GREEN_API_INSTANCE = os.getenv("GREEN_API_INSTANCE", "")
 GREEN_API_TOKEN = os.getenv("GREEN_API_TOKEN", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 SYSTEM_PROMPT = """Ты — Terra.ai, персональный ИИ-агроном и эксперт по растениеводству. 
 Твоя задача — давать четкие, практичные и дружелюбные советы по уходу за растениями, борьбе с вредителями, 
@@ -33,7 +33,6 @@ async def whatsapp_webhook(request: Request):
         
         chat_id = sender_data.get("chatId")
         
-        # Считываем текст и из обычных сообщений, и из WhatsApp Web/с форматированием
         text_message = (
             message_data.get("textMessageData", {}).get("textMessage") or
             message_data.get("extendedTextMessageData", {}).get("text")
@@ -46,28 +45,31 @@ async def whatsapp_webhook(request: Request):
     return {"status": "success"}
 
 async def generate_ai_response(user_text: str) -> str:
-    """Генерация ответа ИИ-агронома через OpenAI"""
-    if not OPENAI_API_KEY:
+    """Генерация ответа ИИ-агронома через Google Gemini API"""
+    if not GEMINI_API_KEY:
         return "Terra.ai: Сервис временно настраивается. Напишите нам чуточку позже!"
         
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    payload = {
+        "system_instruction": {
+            "parts": [{"text": SYSTEM_PROMPT}]
+        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": user_text}]
+            }
+        ]
+    }
+    
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                json={
-                    "model": "gpt-4o-mini",
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_text}
-                    ],
-                    "max_tokens": 500
-                },
-                timeout=15.0
-            )
+            response = await client.post(url, json=payload, timeout=15.0)
             res_json = response.json()
-            return res_json["choices"][0]["message"]["content"]
-        except Exception:
+            return res_json["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            print(f"Gemini API Error: {e}")
             return "Terra.ai: Произошла ошибка при обработке вашего вопроса. Попробуйте еще раз."
 
 async def send_whatsapp_message(chat_id: str, text: str):
@@ -75,7 +77,6 @@ async def send_whatsapp_message(chat_id: str, text: str):
     if not GREEN_API_INSTANCE or not GREEN_API_TOKEN:
         return
         
-    # Точный адрес вашего инстанса (7201) + поддержка редиректов
     url = f"https://7201.api.green-api.com/waInstance{GREEN_API_INSTANCE}/sendMessage/{GREEN_API_TOKEN}"
     payload = {
         "chatId": chat_id,
